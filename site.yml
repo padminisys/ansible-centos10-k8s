@@ -1,0 +1,10 @@
+- hosts: k8s
+  become: true
+  roles:
+    - role: k8s_cilium_centos
+      vars:
+        k8s_version: "1.33"
+        crio_version: "1.33"
+        cilium_cli_version: "v0.18.5"
+        cilium_version: "1.17.5"
+

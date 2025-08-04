@@ -1,0 +1,40 @@
+---
+- name: Add CRI-O YUM repository
+  ansible.builtin.template:
+    src: cri-o.repo.j2
+    dest: /etc/yum.repos.d/cri-o.repo
+    mode: 0644
+
+- name: Add Kubernetes YUM repository
+  ansible.builtin.template:
+    src: kubernetes.repo.j2
+    dest: /etc/yum.repos.d/kubernetes.repo
+    mode: 0644
+
+- name: Install container-selinux dependency
+  ansible.builtin.dnf:
+    name: container-selinux
+    state: present
+
+- name: Install CRI-O and Kubernetes tools (version-controlled)
+  ansible.builtin.dnf:
+    name:
+      - cri-o
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+    disable_excludes: kubernetes
+
+- name: Start and enable CRI-O
+  ansible.builtin.systemd:
+    name: crio
+    enabled: yes
+    state: started
+  notify: reload systemd
+
+- name: Start and enable kubelet
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: yes
+    state: started

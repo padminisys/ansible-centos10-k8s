@@ -53,7 +53,7 @@
     mode: 0644
 
 - name: Ensure required kernel modules are loaded
-  community.general.modprobe:
+  ansible.builtin.kernel_module:
     name: "{{ item }}"
     state: present
   loop:

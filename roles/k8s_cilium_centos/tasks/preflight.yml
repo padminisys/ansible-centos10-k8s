@@ -5,11 +5,11 @@
 #     warn: false
 #   when: ansible_swaptotal_mb > 0
 
-- name: Ensure swap entry in /etc/fstab is commented
-  ansible.builtin.replace:
-    path: /etc/fstab
-    regexp: '^([^#].*\s+swap\s+)'
-    replace: '#\1'
+# - name: Ensure swap entry in /etc/fstab is commented
+#   ansible.builtin.replace:
+#     path: /etc/fstab
+#     regexp: '^([^#].*\s+swap\s+)'
+#     replace: '#\1'
 
 - name: Ensure firewall is enabled
   ansible.builtin.systemd:

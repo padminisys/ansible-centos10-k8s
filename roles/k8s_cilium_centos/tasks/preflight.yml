@@ -15,7 +15,7 @@
   ansible.builtin.systemd:
     name: firewalld
     state: started
-    enabled: yes
+    enabled: true
 
 - name: Open required firewall ports
   ansible.posix.firewalld:
@@ -33,9 +33,9 @@
     - 10259/tcp
     - 30000-32767/tcp
 
-  #- name: Reload firewalld
-  #ansible.posix.firewalld:
-    #state: reloaded
+  # - name: Reload firewalld
+  # ansible.posix.firewalld:
+    # state: reloaded
 
 - name: Reload firewalld
   ansible.builtin.service:
@@ -50,10 +50,10 @@
       br_netfilter
     owner: root
     group: root
-    mode: 0644
+    mode: "0644"
 
 - name: Ensure required kernel modules are loaded
-  ansible.builtin.kernel_module:
+  community.general.modprobe:
     name: "{{ item }}"
     state: present
   loop:
@@ -69,7 +69,7 @@
       net.bridge.bridge-nf-call-ip6tables = 1
     owner: root
     group: root
-    mode: 0644
+    mode: "0644"
 
 - name: Apply sysctl params
   ansible.builtin.command: sysctl --system
@@ -79,7 +79,8 @@
 - name: Set SELinux to permissive mode (runtime)
   ansible.builtin.command: setenforce 0
   when: ansible_selinux.status == "enabled" and ansible_selinux.mode != "permissive"
-  ignore_errors: true # for idempotency
+  failed_when: false
+  changed_when: ansible_selinux.status == "enabled" and ansible_selinux.mode != "permissive"
 
 - name: Set SELinux to permissive in config file
   ansible.builtin.replace:

@@ -8,8 +8,8 @@
 - name: Install runtimes and k8s
   import_tasks: install.yml
 
-- name: Configure system
-  import_tasks: configure.yml
+    #- name: Configure system
+    #import_tasks: configure.yml
 
 - name: Initialize Kubernetes cluster
   import_tasks: init_cluster.yml

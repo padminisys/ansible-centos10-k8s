@@ -1,21 +1,25 @@
 ---
-# - name: Disable SWAP
-#   ansible.builtin.command: swapoff -a
-#   args:
-#     warn: false
-#   when: ansible_swaptotal_mb > 0
+- name: Gather all facts including swap information
+  ansible.builtin.setup:
+    gather_subset: all
 
-# - name: Ensure swap entry in /etc/fstab is commented
-#   ansible.builtin.replace:
-#     path: /etc/fstab
-#     regexp: '^([^#].*\s+swap\s+)'
-#     replace: '#\1'
+- name: Disable SWAP
+  ansible.builtin.command: swapoff -a
+  args:
+    warn: false
+  when: ansible_swaptotal_mb is defined and ansible_swaptotal_mb > 0
+
+- name: Ensure swap entry in /etc/fstab is commented
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\s+swap\s+)'
+    replace: '#\1'
 
 - name: Ensure firewall is enabled
   ansible.builtin.systemd:
     name: firewalld
     state: started
-    enabled: true
+    enabled: yes
 
 - name: Open required firewall ports
   ansible.posix.firewalld:
@@ -33,9 +37,9 @@
     - 10259/tcp
     - 30000-32767/tcp
 
-  # - name: Reload firewalld
-  # ansible.posix.firewalld:
-    # state: reloaded
+  #- name: Reload firewalld
+  #ansible.posix.firewalld:
+    #state: reloaded
 
 - name: Reload firewalld
   ansible.builtin.service:
@@ -50,16 +54,15 @@
       br_netfilter
     owner: root
     group: root
-    mode: "0644"
+    mode: 0644
 
 - name: Ensure required kernel modules are loaded
-  ansible.builtin.command: modprobe {{ item }}
+  ansible.builtin.modprobe:
+    name: "{{ item }}"
+    state: present
   loop:
     - overlay
     - br_netfilter
-  register: modprobe_result
-  changed_when: modprobe_result.rc == 0
-  failed_when: false
 
 - name: Configure kernel parameters for Kubernetes
   ansible.builtin.copy:
@@ -70,7 +73,7 @@
       net.bridge.bridge-nf-call-ip6tables = 1
     owner: root
     group: root
-    mode: "0644"
+    mode: 0644
 
 - name: Apply sysctl params
   ansible.builtin.command: sysctl --system
@@ -80,8 +83,7 @@
 - name: Set SELinux to permissive mode (runtime)
   ansible.builtin.command: setenforce 0
   when: ansible_selinux.status == "enabled" and ansible_selinux.mode != "permissive"
-  failed_when: false
-  changed_when: ansible_selinux.status == "enabled" and ansible_selinux.mode != "permissive"
+  ignore_errors: true # for idempotency
 
 - name: Set SELinux to permissive in config file
   ansible.builtin.replace:

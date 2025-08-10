@@ -75,7 +75,7 @@
     #when: "'cilium is running' not in cilium_status_check.stdout.lower() and 'cilium status' not in cilium_status_check.stdout.lower()"
 
 - name: Wait for Cilium to be ready
-  ansible.builtin.command: /usr/local/bin/cilium status --wait
+  ansible.builtin.command: /usr/local/bin/cilium status 
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
   register: cilium_status

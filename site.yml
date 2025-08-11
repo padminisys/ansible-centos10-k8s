@@ -1,4 +1,4 @@
-- hosts: localhost
+- hosts: 152.53.142.69
   become: true
   gather_facts: yes
   roles:

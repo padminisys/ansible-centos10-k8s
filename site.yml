@@ -1,4 +1,4 @@
-- hosts: 152.53.142.69
+- hosts: all
   become: true
   gather_facts: yes
   roles:

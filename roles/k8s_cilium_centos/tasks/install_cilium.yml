@@ -1,0 +1,87 @@
+- name: Download cilium-cli binary tarball
+  ansible.builtin.get_url:
+    url: "https://github.com/cilium/cilium-cli/releases/download/{{ cilium_cli_version }}/cilium-linux-{{ cilium_cli_arch }}.tar.gz"
+    dest: /tmp/cilium-linux-{{ cilium_cli_arch }}.tar.gz
+    mode: 0644
+    force: yes
+
+- name: Download cilium-cli sha256sum
+  ansible.builtin.get_url:
+    url: "https://github.com/cilium/cilium-cli/releases/download/{{ cilium_cli_version }}/cilium-linux-{{ cilium_cli_arch }}.tar.gz.sha256sum"
+    dest: /tmp/cilium-linux-{{ cilium_cli_arch }}.tar.gz.sha256sum
+    mode: 0644
+    force: yes
+
+- name: Check cilium-cli sha256sum
+  ansible.builtin.shell: |
+    cd /tmp && sha256sum --check cilium-linux-{{ cilium_cli_arch }}.tar.gz.sha256sum
+  args:
+    warn: false
+  register: cilium_sha
+  changed_when: false
+  failed_when: false
+  ignore_errors: true
+
+- name: Extract and install cilium-cli
+  ansible.builtin.unarchive:
+    src: /tmp/cilium-linux-{{ cilium_cli_arch }}.tar.gz
+    dest: /usr/local/bin/
+    remote_src: yes
+    mode: 0755
+    creates: /usr/local/bin/cilium
+
+- name: Remove cilium-cli archives
+  ansible.builtin.file:
+    path: "/tmp/cilium-linux-{{ cilium_cli_arch }}.tar.gz{{ item }}"
+    state: absent
+  loop:
+    - ""
+    - ".sha256sum"
+
+- name: Check if Cilium is already installed
+  ansible.builtin.command: /usr/local/bin/cilium status
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: cilium_status_check
+  changed_when: false
+  failed_when: false
+
+
+- name: Install Cilium CNI in cluster
+  ansible.builtin.command: /usr/local/bin/cilium install --version {{ cilium_version }}
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  args:
+    creates: /etc/cilium_install_done
+  register: cilium_install
+  changed_when: "'Cilium was successfully installed' in cilium_install.stdout"
+  when: >
+    (
+      'unable to connect' in cilium_status_check.stdout.lower() or
+      'not installed' in cilium_status_check.stdout.lower() or
+      'cannot re-use a name that is still in use' in cilium_status_check.stderr.lower() or
+      'cilium is running' in cilium_status_check.stdout.lower()
+    ) == False
+  ignore_errors: true
+
+    #- name: Install Cilium CNI in cluster
+    #ansible.builtin.command: /usr/local/bin/cilium install --version {{ cilium_version }}
+    #environment:
+    #KUBECONFIG: /etc/kubernetes/admin.conf
+    #args:
+    #creates: /etc/cilium_install_done
+    #register: cilium_install
+    #changed_when: "'Cilium was successfully installed' in cilium_install.stdout"
+    #when: "'cilium is running' not in cilium_status_check.stdout.lower() and 'cilium status' not in cilium_status_check.stdout.lower()"
+
+- name: Wait for Cilium to be ready
+  ansible.builtin.command: /usr/local/bin/cilium status 
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: cilium_status
+  changed_when: false
+  retries: 2           # Only 2 (as an example; set to 5 if desired)
+  delay: 10
+  until: "'online' in cilium_status.stdout"
+  ignore_errors: true
+

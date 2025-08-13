@@ -1,0 +1,18 @@
+#SPDX-License-Identifier: MIT-0
+---
+# tasks file for k8s_cilium_centos
+
+- name: Preflight
+  import_tasks: preflight.yml
+
+- name: Install runtimes and k8s
+  import_tasks: install.yml
+
+    #- name: Configure system
+    #import_tasks: configure.yml
+
+- name: Initialize Kubernetes cluster
+  import_tasks: init_cluster.yml
+
+- name: Install Cilium
+  import_tasks: install_cilium.yml

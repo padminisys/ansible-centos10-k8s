@@ -12,12 +12,33 @@
   when: not k8s_admin_conf.stat.exists
 
 # Initialize control-plane (single node)
+# - name: Initialize control-plane (single node)
+#   ansible.builtin.command: kubeadm init --cri-socket=unix:///var/run/crio/crio.sock
+#   args:
+#     creates: /etc/kubernetes/admin.conf
+#   register: kubeadm_init
+#   when: not k8s_admin_conf.stat.exists
+
+# Initialize control-plane Without kube-proxy(single node)
 - name: Initialize control-plane (single node)
-  ansible.builtin.command: kubeadm init --cri-socket=unix:///var/run/crio/crio.sock
+  ansible.builtin.command: >
+    kubeadm init 
+    --cri-socket=unix:///var/run/crio/crio.sock 
+    --skip-phases=addon/kube-proxy
   args:
     creates: /etc/kubernetes/admin.conf
   register: kubeadm_init
   when: not k8s_admin_conf.stat.exists
+
+  # Optional: Verify kube-proxy is absent
+- name: Check if kube-proxy DaemonSet exists
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: DaemonSet
+    namespace: kube-system
+    name: kube-proxy
+  register: kube_proxy_ds
+  failed_when: false
 
 # Ensure .kube directory exists for root
 - name: Ensure .kube directory exists for root

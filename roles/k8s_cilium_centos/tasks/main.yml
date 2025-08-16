@@ -14,5 +14,5 @@
 - name: Initialize Kubernetes cluster
   import_tasks: init_cluster.yml
 
-- name: Install Cilium
-  import_tasks: install_cilium.yml
+# - name: Install Cilium
+#   import_tasks: install_cilium.yml

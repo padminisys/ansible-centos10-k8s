@@ -16,7 +16,7 @@
         name:
           - curl
           - tar
-      state: present
+        state: present
 
     - name: Download Helm binary
       ansible.builtin.get_url:

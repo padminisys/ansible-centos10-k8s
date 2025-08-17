@@ -11,32 +11,46 @@
 
   tasks:
 
-    - name: Add Helm repo
-      ansible.builtin.shell: |
-        curl https://baltocdn.com/helm/signing.asc | sudo tee /etc/pki/rpm-gpg/helm.asc
-        cat <<EOF | sudo tee /etc/yum.repos.d/helm.repo
-        [helm]
-        name=Helm
-        baseurl=https://baltocdn.com/helm/stable/rpm
-        enabled=1
-        gpgcheck=1
-        gpgkey=file:///etc/pki/rpm-gpg/helm.asc
-        EOF
-      args:
-        creates: /etc/yum.repos.d/helm.repo
-
-    - name: Install Helm
+    - name: Ensure required packages are installed
       ansible.builtin.package:
-        name: helm
-        state: present
-      ignore_errors: true
+        name:
+          - curl
+          - tar
+      state: present
 
-    - name: Ensure Helm is installed
+    - name: Download Helm binary
+      ansible.builtin.get_url:
+        url: https://get.helm.sh/helm-v3.15.2-linux-amd64.tar.gz
+        dest: /tmp/helm.tar.gz
+        mode: '0644'
+
+    - name: Extract Helm
+      ansible.builtin.unarchive:
+        src: /tmp/helm.tar.gz
+        dest: /tmp/
+        remote_src: true
+
+    - name: Move Helm binary to /usr/local/bin
+      ansible.builtin.copy:
+        src: /tmp/linux-amd64/helm
+        dest: /usr/local/bin/helm
+        mode: '0755'
+        remote_src: true
+
+    - name: Verify Helm installation
       ansible.builtin.command: helm version --short
-      register: helm_check
+      register: helm_version
       changed_when: false
-      failed_when: helm_check.rc != 0
-      tags: always
+
+    - debug:
+        var: helm_version.stdout
+
+    # - name: Ensure Helm is installed
+    #   ansible.builtin.command: helm version --short
+    #   register: helm_check
+    #   changed_when: false
+    #   failed_when: helm_check.rc != 0
+    #   tags: always
 
 
     - name: Ensure Cilium Helm repo is added

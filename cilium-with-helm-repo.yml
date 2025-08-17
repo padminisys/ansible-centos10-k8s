@@ -29,6 +29,7 @@
       ansible.builtin.package:
         name: helm
         state: present
+      ignore_errors: true
 
     - name: Ensure Helm is installed
       ansible.builtin.command: helm version --short

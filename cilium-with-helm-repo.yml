@@ -11,12 +11,24 @@
 
   tasks:
 
-    - name: Install Helm repo
+    - name: Add Helm repo
       ansible.builtin.shell: |
-       curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+        curl https://baltocdn.com/helm/signing.asc | sudo tee /etc/pki/rpm-gpg/helm.asc
+        cat <<EOF | sudo tee /etc/yum.repos.d/helm.repo
+        [helm]
+        name=Helm
+        baseurl=https://baltocdn.com/helm/stable/rpm
+        enabled=1
+        gpgcheck=1
+        gpgkey=file:///etc/pki/rpm-gpg/helm.asc
+        EOF
       args:
-       creates: /usr/local/bin/helm
+        creates: /etc/yum.repos.d/helm.repo
 
+    - name: Install Helm
+      ansible.builtin.package:
+        name: helm
+        state: present
 
     - name: Ensure Helm is installed
       ansible.builtin.command: helm version --short

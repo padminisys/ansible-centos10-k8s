@@ -1,5 +1,6 @@
 ---
 - name: Install Cilium CNI using Helm
+  hosts: all
   become: true
 
   vars:

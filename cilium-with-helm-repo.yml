@@ -11,31 +11,12 @@
 
   tasks:
 
-    - name: Download Helm binary
-      ansible.builtin.get_url:
-      url: https://get.helm.sh/helm-v3.15.4-linux-amd64.tar.gz
-      dest: /tmp/helm.tar.gz
-      mode: '0644'
+    - name: Install Helm repo
+      ansible.builtin.command: >
+       curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+      creates: /usr/local/bin/helm
 
-    - name: Extract Helm binary
-      ansible.builtin.unarchive:
-      src: /tmp/helm.tar.gz
-      dest: /tmp/
-      remote_src: yes
-
-    - name: Move Helm binary to /usr/local/bin
-      ansible.builtin.copy:
-      src: /tmp/linux-amd64/helm
-      dest: /usr/local/bin/helm
-      mode: '0755'
-
-    - name: Verify Helm is installed
-      ansible.builtin.command: helm version --short
-      register: helm_version
-      changed_when: false
-
-    - debug:
-      var: helm_version.stdout
 
     - name: Ensure Helm is installed
       ansible.builtin.command: helm version --short

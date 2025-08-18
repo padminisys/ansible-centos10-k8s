@@ -59,6 +59,44 @@
         - "/tmp/linux-amd64"
       when: helm_check.rc != 0
 
+    - name: Ensure Helm installed (download + install if missing)
+      block:
+      - name: Check if helm exists
+        ansible.builtin.stat:
+          path: /usr/local/bin/helm
+        register: helm_bin
+
+    - name: Download Helm tarball
+      ansible.builtin.get_url:
+        url: "https://get.helm.sh/helm-v3.15.2-linux-amd64.tar.gz"
+        dest: "/tmp/helm-v3.15.2-linux-amd64.tar.gz"
+        mode: "0644"
+      when: not helm_bin.stat.exists
+
+    - name: Extract Helm tarball
+      ansible.builtin.unarchive:
+        src: "/tmp/helm-v3.15.2-linux-amd64.tar.gz"
+        dest: /tmp/
+        remote_src: true
+      when: not helm_bin.stat.exists
+
+    - name: Install helm to /usr/local/bin
+      ansible.builtin.copy:
+        src: /tmp/linux-amd64/helm
+        dest: /usr/local/bin/helm
+        mode: "0755"
+        remote_src: true
+      when: not helm_bin.stat.exists
+
+    - name: Cleanup helm temp files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/helm-v3.15.2-linux-amd64.tar.gz
+        - /tmp/linux-amd64
+      when: not helm_bin.stat.exists
+
     - name: Verify Helm installation
       ansible.builtin.command: helm version --short
       register: helm_version_out

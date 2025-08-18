@@ -28,27 +28,28 @@
       changed_when: false
       failed_when: false
 
-    - name: Download Helm tarball (only if helm missing)
+
+    - name: Download Helm binary
       ansible.builtin.get_url:
-        url: "{{ helm_url }}"
-        dest: "/tmp/{{ helm_tar }}"
+        url: https://get.helm.sh/helm-v3.14.4-linux-amd64.tar.gz
+        dest: /tmp/helm.tar.gz
         mode: '0644'
-      when: helm_check.rc != 0
 
-    - name: Extract Helm tarball (only if helm missing)
+    - name: Extract Helm binary
       ansible.builtin.unarchive:
-        src: "/tmp/{{ helm_tar }}"
+        src: /tmp/helm.tar.gz
         dest: /tmp/
-        remote_src: true
-      when: helm_check.rc != 0
+      remote_src: true
 
-    - name: Install helm binary to /usr/local/bin (only if helm missing)
-      ansible.builtin.copy:
-        src: /tmp/linux-amd64/helm
-        dest: /usr/local/bin/helm
+    - name: Move Helm to /usr/local/bin
+      ansible.builtin.command: mv /tmp/linux-amd64/helm /usr/local/bin/helm
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Ensure Helm is executable
+      ansible.builtin.file:
+        path: /usr/local/bin/helm
         mode: '0755'
-        remote_src: true
-      when: helm_check.rc != 0
 
     - name: Cleanup helm temp files
       ansible.builtin.file:

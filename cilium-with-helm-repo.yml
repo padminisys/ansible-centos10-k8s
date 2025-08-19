@@ -11,6 +11,17 @@
     cilium_values_file: "./cilium-values.yml"
 
   tasks:
+
+    - name: Verify file existence
+      stat:
+        path: "{{ cilium_values_file }}"
+      register: stat_result
+
+    - name: Debug file existence
+      debug:
+        msg: "File exists: {{ stat_result.stat.exists }}"
+
+    
     - name: Ensure dependencies are present
       ansible.builtin.package:
         name:

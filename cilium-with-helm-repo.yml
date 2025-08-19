@@ -11,11 +11,12 @@
     cilium_values_file: "./cilium-values.yml"
 
   tasks:
-    # - name: Ensure dependencies are present
-    #   ansible.builtin.package:
-    #     name:
-    #       - curl
-    #     state: present
+    - name: Ensure dependencies are present
+      ansible.builtin.package:
+        name:
+          - curl
+          - git
+        state: present
 
     - name: Install Helm if not present
       ansible.builtin.shell: |

@@ -18,11 +18,20 @@
           - git
         state: present
 
+    # - name: Install Helm if not present
+    #   ansible.builtin.shell: |
+    #     curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    #   args:
+    #     creates: /usr/bin/helm
+
     - name: Install Helm if not present
       ansible.builtin.shell: |
         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
       args:
-        creates: /usr/bin/helm
+        creates: /usr/local/bin/helm
+      register: helm_install_status
+      failed_when: >
+        helm_install_status.rc != 0 and "is already latest" not in helm_install_status.stdout
 
     - name: Ensure Cilium Helm repo is added
       kubernetes.core.helm_repository:

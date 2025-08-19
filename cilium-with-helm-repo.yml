@@ -1,185 +1,57 @@
 ---
 - name: Install Cilium CNI using Helm
-  hosts: all
+  hosts: localhost
   become: true
+
   vars:
-    cilium_version: "1.18.1"
+    # Helm chart version (NOT app version). Check: helm search repo cilium --versions
+    cilium_chart_version: "1.18.1"
     cilium_namespace: "kube-system"
     kubeconfig_path: "/etc/kubernetes/admin.conf"
-    cilium_values_file: "./cilium-values.yml"   # optional; auto-detected
-    helm_version: "v3.15.2"
-    helm_tar: "helm-{{ helm_version }}-linux-amd64.tar.gz"
-    helm_url: "https://get.helm.sh/{{ helm_tar }}"
-
-  pre_tasks:
-    - name: Ensure base packages are present (no repo refresh)
-      ansible.builtin.dnf:
-        name:
-          - curl
-          - tar
-        state: present
-        update_cache: false
-      failed_when: false
+    cilium_values_file: "./cilium-values.yml"
 
   tasks:
-    - name: Check if helm is already installed
-      ansible.builtin.command: helm version --short
-      register: helm_check
-      changed_when: false
-      failed_when: false
+    - name: Ensure dependencies are present
+      ansible.builtin.package:
+        name:
+          - curl
+        state: present
 
-
-    - name: Download Helm binary
-      ansible.builtin.get_url:
-        url: https://get.helm.sh/helm-v3.14.4-linux-amd64.tar.gz
-        dest: /tmp/helm.tar.gz
-        mode: '0644'
-
-    - name: Extract Helm binary
-      ansible.builtin.unarchive:
-        src: /tmp/helm.tar.gz
-        dest: /tmp/
-      remote_src: true
-
-    - name: Move Helm to /usr/local/bin
-      ansible.builtin.command: mv /tmp/linux-amd64/helm /usr/local/bin/helm
+    - name: Install Helm if not present
+      ansible.builtin.shell: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
       args:
         creates: /usr/local/bin/helm
 
-    - name: Ensure Helm is executable
-      ansible.builtin.file:
-        path: /usr/local/bin/helm
-        mode: '0755'
-
-    - name: Cleanup helm temp files
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - "/tmp/{{ helm_tar }}"
-        - "/tmp/linux-amd64"
-      when: helm_check.rc != 0
-
-    - name: Ensure Helm installed (download + install if missing)
-      block:
-      - name: Check if helm exists
-        ansible.builtin.stat:
-          path: /usr/local/bin/helm
-        register: helm_bin
-
-    - name: Download Helm tarball
-      ansible.builtin.get_url:
-        url: "https://get.helm.sh/helm-v3.15.2-linux-amd64.tar.gz"
-        dest: "/tmp/helm-v3.15.2-linux-amd64.tar.gz"
-        mode: "0644"
-      when: not helm_bin.stat.exists
-
-    - name: Extract Helm tarball
-      ansible.builtin.unarchive:
-        src: "/tmp/helm-v3.15.2-linux-amd64.tar.gz"
-        dest: /tmp/
-        remote_src: true
-      when: not helm_bin.stat.exists
-
-    - name: Install helm to /usr/local/bin
-      ansible.builtin.copy:
-        src: /tmp/linux-amd64/helm
-        dest: /usr/local/bin/helm
-        mode: "0755"
-        remote_src: true
-      when: not helm_bin.stat.exists
-
-    - name: Cleanup helm temp files
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /tmp/helm-v3.15.2-linux-amd64.tar.gz
-        - /tmp/linux-amd64
-      when: not helm_bin.stat.exists
-
-    - name: Verify Helm installation
-      ansible.builtin.command: helm version --short
-      register: helm_version_out
-      changed_when: false
-
-    - name: Ensure Cilium Helm repo is added (idempotent)
+    - name: Ensure Cilium Helm repo is added
       kubernetes.core.helm_repository:
         name: cilium
         repo_url: https://helm.cilium.io
-      register: helm_repo_result
-      failed_when: >
-        helm_repo_result.failed and
-        ("already have a repository named" not in (helm_repo_result.msg | default('')))
 
     - name: Update Helm repositories
       ansible.builtin.command: helm repo update
       changed_when: false
 
-    - name: Check if cilium values file exists locally (controller)
-      ansible.builtin.stat:
-        path: "{{ cilium_values_file }}"
-      register: cilium_values_stat
-      delegate_to: localhost
-      run_once: true
-      failed_when: false
-
-    - name: Transfer cilium-values.yml to remote if present on controller
-      ansible.builtin.copy:
-        src: "{{ cilium_values_file }}"
-        dest: "/tmp/cilium-values.yml"
-        mode: '0644'
-      when: cilium_values_stat.stat.exists | default(false)
-
     - name: Install or upgrade Cilium using Helm
       kubernetes.core.helm:
         name: cilium
         chart_ref: cilium/cilium
-        chart_version: "{{ cilium_version }}"
+        chart_version: "{{ cilium_chart_version }}"
         release_namespace: "{{ cilium_namespace }}"
         create_namespace: true
+        values_files:
+          - "{{ cilium_values_file }}"
         kubeconfig: "{{ kubeconfig_path }}"
         wait: true
-        wait_timeout: "10m"
-        values_files: "{{ ['/tmp/cilium-values.yml'] if cilium_values_stat.stat.exists | default(false) else omit }}"
-        release_values: >-
-          {{ omit if cilium_values_stat.stat.exists | default(false) else {
-            'operator': {'replicas': 1},
-            'kubeProxyReplacement': True,
-            'k8sServiceHost': ansible_default_ipv4.address | default('127.0.0.1'),
-            'k8sServicePort': 6443,
-            'cni': {'install': True, 'exclusive': True},
-            'ipam': {'mode': 'kubernetes'}
-          } }}
 
-    - name: Wait for Cilium DaemonSet to be ready
+    - name: Wait for Cilium pods to be Ready
       ansible.builtin.command: >
-        kubectl get ds cilium -n {{ cilium_namespace }}
-        -o jsonpath='{.status.numberReady}/{.status.desiredNumberScheduled}'
-        --kubeconfig {{ kubeconfig_path }}
-      register: cilium_ds
+        kubectl wait --for=condition=Ready pods
+        -l k8s-app=cilium -n {{ cilium_namespace }} --timeout=300s
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: cilium_wait
+      retries: 3
+      delay: 20
+      until: cilium_wait.rc == 0
       changed_when: false
-      retries: 30
-      delay: 10
-      until: >
-        cilium_ds.stdout is search('^\d+/\d+$') and
-        (cilium_ds.stdout.split('/')[0] == cilium_ds.stdout.split('/')[1])
-
-    - name: Wait for Cilium operator to be ready
-      ansible.builtin.command: >
-        kubectl get deploy cilium-operator -n {{ cilium_namespace }}
-        -o jsonpath='{.status.readyReplicas}/{.spec.replicas}'
-        --kubeconfig {{ kubeconfig_path }}
-      register: cilium_op
-      changed_when: false
-      retries: 30
-      delay: 10
-      until: >
-        cilium_op.stdout is search('^\d+/\d+$') and
-        (cilium_op.stdout.split('/')[0] == cilium_op.stdout.split('/')[1])
-
-    - name: Show Cilium readiness summary
-      ansible.builtin.debug:
-        msg: |
-          Cilium DS Ready: {{ cilium_ds.stdout }}
-          Cilium Operator Ready: {{ cilium_op.stdout }}

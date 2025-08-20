@@ -1,0 +1,200 @@
+---
+# Kubernetes Worker Join Playbook (RHEL 10 / CentOS Stream 10)
+# No need for cp-1 / groups / delegate confusion.
+# Master IP is hardcoded here.
+#
+# Usage:
+# ansible-playbook -i inventory.ini 03-join-worker.yml
+
+- name: "Join Kubernetes worker nodes to control plane"
+  hosts: kube_workers
+  become: true
+  gather_facts: true
+
+  vars:
+    k8s_version: "1.30"
+    cri_socket: "/run/containerd/containerd.sock"
+    master_ip: "98.70.246.166"   # <--- Yahi tumhara control-plane IP fix hai
+    master_user: "root"      # <--- Master SSH user
+    master_kubeconfig: "/etc/kubernetes/admin.conf"
+
+  pre_tasks:
+    - name: "Disable swap temporarily"
+      command: swapoff -a
+      when: ansible_swaptotal_mb | default(0) | int > 0
+      changed_when: false
+
+    - name: "Disable swap permanently"
+      replace:
+        path: /etc/fstab
+        regexp: '^\s*([^#]\S+)\s+\S+\s+swap\s+\S+\s+\S+\s+\S+'
+        replace: '# \1 swap disabled by Ansible'
+
+    - name: "Load kernel modules required by Kubernetes"
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    - name: Load required kernel modules
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: "Ensure kernel modules are loaded"
+      ansible.builtin.shell: |
+        modprobe overlay || true
+        modprobe br_netfilter || true
+      changed_when: false
+
+
+    - name: "Set sysctl params for Kubernetes networking"
+      copy:
+        dest: /etc/sysctl.d/kubernetes.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+        mode: '0644'
+
+    - name: "Apply sysctl params"
+      command: sysctl --system
+      changed_when: false
+
+  tasks:
+    # -------------------------
+    # Install containerd + Kubernetes binaries
+    # -------------------------
+    #
+    - name: "Remove old Kubernetes repo if exists"
+      file:
+        path: /etc/yum.repos.d/kubernetes.repo
+        state: absent
+
+    - name: "Install dependencies"
+      dnf:
+        name:
+          - yum-utils
+          - device-mapper-persistent-data
+          - lvm2
+          - curl
+          - ca-certificates
+        state: present
+        disablerepo: kubernetes
+
+    - name: "Enable Docker CE repository"
+      shell: |
+        dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+      args:
+        creates: /etc/yum.repos.d/docker-ce.repo
+
+    - name: "Install containerd"
+      dnf:
+        name: containerd
+        state: present
+
+    - name: "Generate default containerd config if missing"
+      shell: |
+        test -f /etc/containerd/config.toml || (mkdir -p /etc/containerd && containerd config default > /etc/containerd/config.toml)
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: "Ensure SystemdCgroup = true in containerd config"
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: '^\s*SystemdCgroup\s*=\s*false'
+        replace: '            SystemdCgroup = true'
+
+    - name: "Enable and restart containerd"
+      systemd:
+        name: containerd
+        enabled: true
+        state: restarted
+
+    # -------------------------
+    # Install Kubernetes components
+    # -------------------------
+    - name: "Add Kubernetes yum repo"
+      copy:
+        dest: /etc/yum.repos.d/kubernetes.repo
+        content: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://prod-cdn.packages.k8s.io/repositories/isv:/kubernetes:/core:/stable:/v1.33/rpm/
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=2
+          gpgkey=https://prod-cdn.packages.k8s.io/repositories/isv:/kubernetes:/core:/stable:/v1.33/rpm/repomd.xml.key
+        mode: '0644'
+
+    - name: "Clean DNF cache"
+      command: dnf clean all
+
+    - name: "Refresh DNF metadata"
+      command: dnf makecache --refresh
+
+    - name: "Install kubeadm, kubectl and kubelet"
+      dnf:
+        name:
+          - kubeadm
+          - kubelet
+          - kubectl
+        state: present
+        disable_gpg_check: true
+
+    - name: "Enable and start kubelet"
+      systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+    # -------------------------
+    # Join Worker to Cluster
+    # -------------------------
+    - name: "Check if node already joined"
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Get kubeadm join command from master
+      command: kubeadm token create --print-join-command
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+      register: kubeadm_join_command
+
+    - name: Join worker nodes to cluster
+      shell: "{{ kubeadm_join_command.stdout }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+
+          #- name: "Get kubeadm join command from master"
+          #command: kubeadm token create --ttl 30m --print-join-command --kubeconfig={{ master_kubeconfig }}
+          #register: join_cmd_raw
+          #delegate_to: "{{ master_ip }}"
+          #become: true
+          #become_user: "{{ master_user }}"
+          #when: not kubelet_conf.stat.exists
+
+    - name: "Assemble join command"
+      set_fact:
+        kubeadm_join_cmd: "{{ join_cmd_raw.stdout }} --cri-socket {{ cri_socket }}"
+      when: not kubelet_conf.stat.exists
+
+    - name: "Join the worker node"
+      command: "{{ kubeadm_join_cmd }}"
+      when: not kubelet_conf.stat.exists
+
+    - name: "Wait until node is Ready"
+      delegate_to: "{{ master_ip }}"
+      retries: 30
+      delay: 10
+      shell: |
+        NODE_NAME="{{ ansible_facts['nodename'] | default(inventory_hostname) }}"
+        kubectl --kubeconfig={{ master_kubeconfig }} get node "${NODE_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q True
+      changed_when: false
+      when: not kubelet_conf.stat.exists

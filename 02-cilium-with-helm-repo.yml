@@ -8,7 +8,7 @@
     cilium_chart_version: "1.18.1"
     cilium_namespace: "kube-system"
     kubeconfig_path: "/etc/kubernetes/admin.conf"
-    cilium_values_file: "./cilium-values.yml"
+    cilium_values_file: "{{ playbook_dir }}/cilium-values.yml"
 
   tasks:
 

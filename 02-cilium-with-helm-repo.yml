@@ -8,9 +8,15 @@
     cilium_chart_version: "1.18.1"
     cilium_namespace: "kube-system"
     kubeconfig_path: "/etc/kubernetes/admin.conf"
-    cilium_values_file: "{{ playbook_dir }}/cilium-values.yml"
+    cilium_values_file: "/tmp/cilium-values.yml"
 
   tasks:
+
+    - name: Copy Cilium values file to target host
+      ansible.builtin.copy:
+        src: cilium-values.yml
+        dest: "{{ cilium_values_file }}"
+        mode: '0644'
 
     - name: Verify file existence
       stat:
@@ -21,7 +27,6 @@
       debug:
         msg: "File exists: {{ stat_result.stat.exists }}"
 
-    
     - name: Ensure dependencies are present
       ansible.builtin.package:
         name:

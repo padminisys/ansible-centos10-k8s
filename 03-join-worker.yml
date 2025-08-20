@@ -186,7 +186,8 @@
 
     - name: "Join the worker node"
       shell: |
-        {{ kubeadm_join_cmd }} --cri-socket unix:///var/run/crio/crio.sock
+        {{ kubeadm_join_cmd }} 
+        #--cri-socket unix:///var/run/crio/crio.sock
       args:
         executable: /bin/bash
       when: not kubelet_conf.stat.exists

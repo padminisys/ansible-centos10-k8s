@@ -11,12 +11,6 @@
   become: true
   gather_facts: true
 
-  vars:
-    k8s_version: "1.30"
-    cri_socket: "/var/run/crio/crio.sock"
-    master_ip: "152.53.142.69"   # <--- Yahi tumhara control-plane IP fix hai
-    master_user: "root"      # <--- Master SSH user
-    master_kubeconfig: "/etc/kubernetes/admin.conf"
 
   pre_tasks:
     - name: "Disable swap temporarily"
@@ -99,8 +93,8 @@
 
         - name: "Add CRI-O repo"
           get_url:
-            url: "https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/1.28/CentOS_9_Stream/devel:kubic:libcontainers:stable:cri-o:1.28.repo"
-            dest: /etc/yum.repos.d/devel:kubic:libcontainers:stable:cri-o:1.28.repo
+            url: "https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/{{ cri-o_version ]]/CentOS_9_Stream/devel:kubic:libcontainers:stable:cri-o:{{ cri-o_version }}.repo"
+            dest: /etc/yum.repos.d/devel:kubic:libcontainers:stable:cri-o:{{ cri-o_version }}.repo
             mode: '0644'
 
     - name: "Install CRI-O"
@@ -124,11 +118,11 @@
         content: |
           [kubernetes]
           name=Kubernetes
-          baseurl=https://prod-cdn.packages.k8s.io/repositories/isv:/kubernetes:/core:/stable:/v1.33/rpm/
+          baseurl=https://prod-cdn.packages.k8s.io/repositories/isv:/kubernetes:/core:/stable:/{{ k8s_version }}/rpm/
           enabled=1
           gpgcheck=1
           repo_gpgcheck=2
-          gpgkey=https://prod-cdn.packages.k8s.io/repositories/isv:/kubernetes:/core:/stable:/v1.33/rpm/repomd.xml.key
+          gpgkey=https://prod-cdn.packages.k8s.io/repositories/isv:/kubernetes:/core:/stable:/{{ k8s_version }}/rpm/repomd.xml.key
         mode: '0644'
 
     - name: "Clean DNF cache"
@@ -152,54 +146,82 @@
         enabled: true
         state: started
 
-    # -------------------------
-    # Join Worker to Cluster
-    # -------------------------
+# -------------------------
+# Join Worker to Cluster
+# -------------------------
 
-    - name: "Check if node already joined"
+    - name: Check if node already joined
       stat:
         path: /etc/kubernetes/kubelet.conf
       register: kubelet_conf
 
-    - name: Get kubeadm join command from master
-      command: kubeadm token create --print-join-command
+    - name: Get existing kubeadm tokens
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        namespace: kube-system
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: kubeadm_tokens
       delegate_to: "{{ groups['kube_control_plane'][0] }}"
       run_once: true
-      register: kubeadm_join_command
 
-    # - name: Join worker nodes to cluster
-    #   shell: "{{ kubeadm_join_command.stdout }}"
-    #   args:
-    #     creates: /etc/kubernetes/kubelet.conf
+    - name: Create kubeadm join token if none exists
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "bootstrap-token-{{ 999999 | random | regex_replace('^(..)(.*)$', '\\1') }}"
+            namespace: kube-system
+          type: bootstrap.kubernetes.io/token
+          stringData:
+            description: "Bootstrap token for kubeadm join"
+            token-id: "{{ lookup('password', '/dev/null length=6 chars=hex') }}"
+            token-secret: "{{ lookup('password', '/dev/null length=16 chars=hex') }}"
+            usage-bootstrap-authentication: "true"
+            usage-bootstrap-signing: "true"
+      when: kubeadm_tokens.resources | selectattr("metadata.name", "search", "^bootstrap-token") | list | length == 0
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+      register: new_token
 
-          #- name: "Get kubeadm join command from master"
-          #command: kubeadm token create --ttl 30m --print-join-command --kubeconfig={{ master_kubeconfig }}
-          #register: join_cmd_raw
-          #delegate_to: "{{ master_ip }}"
-          #become: true
-          #become_user: "{{ master_user }}"
-          #when: not kubelet_conf.stat.exists
-
-    - name: "Assemble join command"
+    - name: Set kubeadm join token fact
       set_fact:
-        kubeadm_join_cmd: "{{ kubeadm_join_command.stdout }} --cri-socket unix:///var/run/crio/crio.sock"
-      # when: not kubelet_conf.stat.exists
+        kubeadm_token: >-
+          {{ (kubeadm_tokens.resources | selectattr("metadata.name", "search", "^bootstrap-token") | map(attribute="metadata.name") | list | first)
+             if (kubeadm_tokens.resources | selectattr("metadata.name", "search", "^bootstrap-token") | list | length > 0)
+             else new_token.result.metadata.name }}
 
-    - name: "Join the worker node"
-      shell: |
-        {{ kubeadm_join_cmd }} 
-     #--cri-socket unix:///var/run/crio/crio.sock
-      args:
-        executable: /bin/bash
-      # when: not kubelet_conf.stat.exists
+    - name: Get CA cert hash
+      slurp:
+        src: /etc/kubernetes/pki/ca.crt
+      register: ca_cert
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
 
-    - name: "Wait until node is Ready"
-      delegate_to: "{{ master_ip }}"
-      retries: 30
-      delay: 10
-      shell: |
-        NODE_NAME="{{ ansible_facts['nodename'] | default(inventory_hostname) }}"
-        kubectl --kubeconfig={{ master_kubeconfig }} get node "${NODE_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' | grep -q True
-      changed_when: false
+    - name: Calculate CA cert SHA256 hash
+      set_fact:
+        ca_cert_hash: "{{ ca_cert.content | b64decode | sha256 }}"
+
+    - name: Join worker node to cluster
+      ansible.builtin.raw: |
+        kubeadm join {{ groups['kube_control_plane'][0] }}:6443 \
+        --token {{ kubeadm_token | regex_replace('^bootstrap-token-', '') }} \
+        --discovery-token-ca-cert-hash sha256:{{ ca_cert_hash }} \
+        --cri-socket {{ cri_socket }}
       when: not kubelet_conf.stat.exists
 
+    - name: Wait until node is Ready
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: node_status
+      until: >
+        (node_status.resources | selectattr("metadata.name", "equalto", inventory_hostname) | first).status.conditions |
+        selectattr("type", "equalto", "Ready") | map(attribute="status") | first == "True"
+      retries: 30
+      delay: 10
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      when: not kubelet_conf.stat.exists

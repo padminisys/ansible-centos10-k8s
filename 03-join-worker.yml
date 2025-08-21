@@ -14,7 +14,7 @@
   vars:
     k8s_version: "1.30"
     cri_socket: "/var/run/crio/crio.sock"
-    master_ip: "98.70.246.166"   # <--- Yahi tumhara control-plane IP fix hai
+    master_ip: "152.53.142.69"   # <--- Yahi tumhara control-plane IP fix hai
     master_user: "root"      # <--- Master SSH user
     master_kubeconfig: "/etc/kubernetes/admin.conf"
 
@@ -156,54 +156,16 @@
     # Join Worker to Cluster
     # -------------------------
 
-    # Step 1. Check if node is already joined
-    - name: Check if kubelet is configured
+    - name: "Check if node already joined"
       stat:
         path: /etc/kubernetes/kubelet.conf
       register: kubelet_conf
 
-# Step 2. Verify if node is already in cluster
-    - name: Check if node is part of cluster
-      command: "kubectl get node {{ inventory_hostname }}"
+    - name: Get kubeadm join command from master
+      command: kubeadm token create --print-join-command
       delegate_to: "{{ groups['kube_control_plane'][0] }}"
-      register: node_check
-      failed_when: false
-      changed_when: false
-      when: kubelet_conf.stat.exists
-
-# Step 3. Reset kubeadm if node is not part of cluster but kubelet.conf exists
-    - name: Reset kubeadm if node is not properly joined
-      command: kubeadm reset -f
-      when: kubelet_conf.stat.exists and node_check.rc != 0
-
-# Step 4. Remove old kubelet configs if reset was done
-    - name: Remove old Kubernetes configs
-      file:
-        path: /etc/kubernetes
-        state: absent
-      when: kubelet_conf.stat.exists and node_check.rc != 0
-
-# Step 5. Join the node using CRI-O socket
-    - name: Join worker nodes to cluster
-        shell: "{{ kubeadm_join_cmd }}"
-      when: not kubelet_conf.stat.exists or node_check.rc != 0
- 
-
-
-
-
-
-    
-    # - name: "Check if node already joined"
-    #   stat:
-    #     path: /etc/kubernetes/kubelet.conf
-    #   register: kubelet_conf
-
-    # - name: Get kubeadm join command from master
-    #   command: kubeadm token create --print-join-command
-    #   delegate_to: "{{ groups['kube_control_plane'][0] }}"
-    #   run_once: true
-    #   register: kubeadm_join_command
+      run_once: true
+      register: kubeadm_join_command
 
     # - name: Join worker nodes to cluster
     #   shell: "{{ kubeadm_join_command.stdout }}"
@@ -218,18 +180,18 @@
           #become_user: "{{ master_user }}"
           #when: not kubelet_conf.stat.exists
 
-    # - name: "Assemble join command"
-    #   set_fact:
-    #     kubeadm_join_cmd: "{{ kubeadm_join_command.stdout }} --cri-socket unix:///var/run/crio/crio.sock"
-    #   when: not kubelet_conf.stat.exists
+    - name: "Assemble join command"
+      set_fact:
+        kubeadm_join_cmd: "{{ kubeadm_join_command.stdout }} --cri-socket unix:///var/run/crio/crio.sock"
+      when: not kubelet_conf.stat.exists
 
-    # - name: "Join the worker node"
-    #   shell: |
-    #     {{ kubeadm_join_cmd }} 
-    #     #--cri-socket unix:///var/run/crio/crio.sock
-    #   args:
-    #     executable: /bin/bash
-    #   when: not kubelet_conf.stat.exists
+    - name: "Join the worker node"
+      shell: |
+        {{ kubeadm_join_cmd }} 
+     #--cri-socket unix:///var/run/crio/crio.sock
+      args:
+        executable: /bin/bash
+      when: not kubelet_conf.stat.exists
 
     - name: "Wait until node is Ready"
       delegate_to: "{{ master_ip }}"

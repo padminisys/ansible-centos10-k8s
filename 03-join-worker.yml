@@ -181,7 +181,7 @@
 
     - name: "Assemble join command"
       set_fact:
-        kubeadm_join_cmd: "{{ join_cmd_raw.stdout }} --cri-socket {{ cri_socket }}"
+        kubeadm_join_cmd: "{{ kubeadm_join_command.stdout }} --cri-socket {{ cri_socket }}"
       when: not kubelet_conf.stat.exists
 
     - name: "Join the worker node"

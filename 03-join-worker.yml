@@ -183,7 +183,7 @@
     - name: "Assemble join command"
       set_fact:
         kubeadm_join_cmd: "{{ kubeadm_join_command.stdout }} --cri-socket unix:///var/run/crio/crio.sock"
-      when: not kubelet_conf.stat.exists
+      # when: not kubelet_conf.stat.exists
 
     - name: "Join the worker node"
       shell: |
@@ -191,7 +191,7 @@
      #--cri-socket unix:///var/run/crio/crio.sock
       args:
         executable: /bin/bash
-      when: not kubelet_conf.stat.exists
+      # when: not kubelet_conf.stat.exists
 
     - name: "Wait until node is Ready"
       delegate_to: "{{ master_ip }}"

@@ -166,10 +166,10 @@
       run_once: true
       register: kubeadm_join_command
 
-    - name: Join worker nodes to cluster
-      shell: "{{ kubeadm_join_command.stdout }}"
-      args:
-        creates: /etc/kubernetes/kubelet.conf
+    # - name: Join worker nodes to cluster
+    #   shell: "{{ kubeadm_join_command.stdout }}"
+    #   args:
+    #     creates: /etc/kubernetes/kubelet.conf
 
           #- name: "Get kubeadm join command from master"
           #command: kubeadm token create --ttl 30m --print-join-command --kubeconfig={{ master_kubeconfig }}
@@ -181,7 +181,7 @@
 
     - name: "Assemble join command"
       set_fact:
-        kubeadm_join_cmd: "{{ kubeadm_join_command.stdout }} --cri-socket {{ cri_socket }}"
+        kubeadm_join_cmd: "{{ kubeadm_join_command.stdout }} --cri-socket unix:///var/run/crio/crio.sock"
       when: not kubelet_conf.stat.exists
 
     - name: "Join the worker node"

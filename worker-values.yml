@@ -1,0 +1,6 @@
+k8s_version: "1.30"  # Change Accordingly
+cri-o_version: "1.28" # Change Accordingly
+cri_socket: "/var/run/crio/crio.sock"
+master_ip: "152.53.142.69"   # Change Accordingly
+master_user: "root"      # <--- Master SSH user
+master_kubeconfig: "/etc/kubernetes/admin.conf"

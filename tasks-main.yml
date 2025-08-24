@@ -1,0 +1,261 @@
+---
+# Kubernetes Worker Join Playbook (RHEL 10 / CentOS Stream 10)
+# No need for cp-1 / groups / delegate confusion.
+# Master IP is hardcoded here.
+#
+# Usage:
+# ansible-playbook -i inventory.ini 03-join-worker.yml
+
+#- name: "Join Kubernetes worker nodes to control plane"
+# hosts: kube_workers
+# become: true
+#  gather_facts: true
+
+
+    - name: "Disable swap temporarily"
+      command: swapoff -a
+      when: ansible_swaptotal_mb | default(0) | int > 0
+      changed_when: false
+
+    - name: "Disable swap permanently"
+      replace:
+        path: /etc/fstab
+        regexp: '^\s*([^#]\S+)\s+\S+\s+swap\s+\S+\s+\S+\s+\S+'
+        replace: '# \1 swap disabled by Ansible'
+
+    - name: "Load kernel modules required by Kubernetes"
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    - name: Load required kernel modules
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: "Ensure kernel modules are loaded"
+      ansible.builtin.shell: |
+        modprobe overlay || true
+        modprobe br_netfilter || true
+      changed_when: false
+
+
+    - name: "Set sysctl params for Kubernetes networking"
+      copy:
+        dest: /etc/sysctl.d/kubernetes.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+        mode: '0644'
+
+    - name: "Apply sysctl params"
+      command: sysctl --system
+      changed_when: false
+
+
+    - name: Ensure pip is installed on master node
+      ansible.builtin.dnf:
+        name: python3-pip
+        state: present
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+
+    - name: Ensure required Python libraries are installed
+      ansible.builtin.pip:
+        name:
+          - kubernetes
+          - openshift
+        executable: pip3
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+
+
+    # -------------------------
+    # Install containerd + Kubernetes binaries
+    # -------------------------
+    #
+    - name: "Remove old Kubernetes repo if exists"
+      file:
+        path: /etc/yum.repos.d/kubernetes.repo
+        state: absent
+
+    - name: "Install dependencies"
+      dnf:
+        name:
+          - yum-utils
+          - device-mapper-persistent-data
+          - lvm2
+          - curl
+          - ca-certificates
+        state: present
+        disablerepo: kubernetes
+
+
+
+    - name: "Enable CRI-O repositories"
+      block:
+        - name: "Add CRI-O Kubernetes repo"
+          get_url:
+            url: "https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/CentOS_9_Stream/devel:kubic:libcontainers:stable.repo"
+            dest: /etc/yum.repos.d/devel:kubic:libcontainers:stable.repo
+            mode: '0644'
+
+        - name: "Add CRI-O repo"
+          get_url:
+            url: "https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/{{ crio_version }}/CentOS_9_Stream/devel:kubic:libcontainers:stable:cri-o:{{ crio_version }}.repo"
+            dest: /etc/yum.repos.d/devel:kubic:libcontainers:stable:cri-o:{{ crio_version }}.repo
+            mode: '0644'
+
+    - name: "Install CRI-O"
+      dnf:
+        name: cri-o
+        state: present
+
+    - name: "Enable and start CRI-O service"
+      systemd:
+        name: crio
+        enabled: true
+        state: started
+
+
+    # -------------------------
+    # Install Kubernetes components
+    # -------------------------
+    - name: "Add Kubernetes yum repo"
+      copy:
+        dest: /etc/yum.repos.d/kubernetes.repo
+        content: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=1
+          gpgkey=https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/repodata/repomd.xml.key
+        mode: '0644'
+
+    - name: "Clean DNF cache"
+      command: dnf clean all
+
+    - name: "Refresh DNF metadata"
+      ansible.builtin.dnf:
+        update_cache: yes
+
+    - name: "Install kubeadm, kubectl and kubelet"
+      dnf:
+        name:
+          - kubeadm
+          - kubelet
+          - kubectl
+        state: present
+        disable_gpg_check: true
+
+    - name: "Enable and start kubelet"
+      systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+# -------------------------
+# Join Worker to Cluster
+# -------------------------
+
+    - name: Check if node already joined
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Get existing kubeadm tokens
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        namespace: kube-system
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: kubeadm_tokens
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+
+    - name: Create kubeadm join token if none exists
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "bootstrap-token-{{ 999999 | random | regex_replace('^(..)(.*)$', '\\1') }}"
+            namespace: kube-system
+          type: bootstrap.kubernetes.io/token
+          stringData:
+            description: "Bootstrap token for kubeadm join"
+            token-id: "{{ lookup('password', '/dev/null length=6 chars=hex') }}"
+            token-secret: "{{ lookup('password', '/dev/null length=16 chars=hex') }}"
+            usage-bootstrap-authentication: "true"
+            usage-bootstrap-signing: "true"
+      when: kubeadm_tokens.resources | selectattr("metadata.name", "search", "^bootstrap-token") | list | length == 0
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+      register: new_token
+
+    - name: Set kubeadm join token fact
+      set_fact:
+        kubeadm_token: >-
+          {{ (kubeadm_tokens.resources | selectattr("metadata.name", "search", "^bootstrap-token") | map(attribute="metadata.name") | list | first)
+             if (kubeadm_tokens.resources | selectattr("metadata.name", "search", "^bootstrap-token") | list | length > 0)
+             else new_token.result.metadata.name }}
+
+    - name: Get CA cert hash
+      slurp:
+        src: /etc/kubernetes/pki/ca.crt
+      register: ca_cert
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+
+    - name: Calculate CA cert SHA256 hash
+      set_fact:
+        ca_cert_hash: "{{ ca_cert.content | b64decode | hash('sha256') }}"
+
+    - name: Reset kubeadm if previous join failed
+      ansible.builtin.raw: kubeadm reset -f
+      ignore_errors: true
+
+    - name: Remove old Kubernetes configs
+      ansible.builtin.file:
+        path: /etc/kubernetes/
+        state: absent
+
+
+    - name: Join worker node to cluster
+      ansible.builtin.raw: |
+        kubeadm join {{ hostvars[groups['kube_control_plane'][0]].ansible_host }}:6443 \
+        --token {{ kubeadm_token | regex_replace('^bootstrap-token-', '') }} \
+        --discovery-token-ca-cert-hash sha256:{{ ca_cert_hash }} \
+        --cri-socket {{ cri_socket }}
+
+        #- name: Join worker node to cluster
+        #ansible.builtin.raw: |
+        #kubeadm join {{ groups['kube_control_plane'][0] }}:6443 \
+        #--token {{ kubeadm_token | regex_replace('^bootstrap-token-', '') }} \
+        #--discovery-token-ca-cert-hash sha256:{{ ca_cert_hash }} \
+        #--cri-socket {{ cri_socket }}
+        #when: not kubelet_conf.stat.exists
+
+    - name: Wait until node is Ready
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: node_status
+      until: >
+        (node_status.resources | selectattr("metadata.name", "equalto", inventory_hostname) | first).status.conditions |
+        selectattr("type", "equalto", "Ready") | map(attribute="status") | first == "True"
+      retries: 30
+      delay: 10
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+        #when: not kubelet_conf.stat.exists

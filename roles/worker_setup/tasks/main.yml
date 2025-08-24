@@ -1,0 +1,231 @@
+---
+# Kubernetes Worker Join Playbook (RHEL 10 / CentOS Stream 10)
+# No need for cp-1 / groups / delegate confusion.
+# Master IP is hardcoded here.
+#
+# Usage:
+# ansible-playbook -i inventory.ini 03-join-worker.yml
+
+#- name: "Join Kubernetes worker nodes to control plane"
+# hosts: kube_workers
+# become: true
+#  gather_facts: true
+
+
+    - name: "Disable swap temporarily"
+      command: swapoff -a
+      when: ansible_swaptotal_mb | default(0) | int > 0
+      changed_when: false
+
+    - name: "Disable swap permanently"
+      replace:
+        path: /etc/fstab
+        regexp: '^\s*([^#]\S+)\s+\S+\s+swap\s+\S+\s+\S+\s+\S+'
+        replace: '# \1 swap disabled by Ansible'
+
+    - name: "Load kernel modules required by Kubernetes"
+      copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    - name: Load required kernel modules
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: "Ensure kernel modules are loaded"
+      ansible.builtin.shell: |
+        modprobe overlay || true
+        modprobe br_netfilter || true
+      changed_when: false
+
+
+    - name: "Set sysctl params for Kubernetes networking"
+      copy:
+        dest: /etc/sysctl.d/kubernetes.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+        mode: '0644'
+
+    - name: "Apply sysctl params"
+      command: sysctl --system
+      changed_when: false
+
+
+    - name: Ensure pip is installed on master node
+      ansible.builtin.dnf:
+        name: python3-pip
+        state: present
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+
+    - name: Ensure required Python libraries are installed
+      ansible.builtin.pip:
+        name:
+          - kubernetes
+          - openshift
+        executable: pip3
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+
+
+    # -------------------------
+    # Install containerd + Kubernetes binaries
+    # -------------------------
+    #
+    - name: "Remove old Kubernetes repo if exists"
+      file:
+        path: /etc/yum.repos.d/kubernetes.repo
+        state: absent
+
+    - name: "Install dependencies"
+      dnf:
+        name:
+          - yum-utils
+          - device-mapper-persistent-data
+          - lvm2
+          - curl
+          - ca-certificates
+        state: present
+        disablerepo: kubernetes
+
+
+
+    - name: "Enable CRI-O repositories"
+      block:
+        - name: "Add CRI-O Kubernetes repo"
+          get_url:
+            url: "https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/CentOS_9_Stream/devel:kubic:libcontainers:stable.repo"
+            dest: /etc/yum.repos.d/devel:kubic:libcontainers:stable.repo
+            mode: '0644'
+
+        - name: "Add CRI-O repo"
+          get_url:
+            url: "https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable:/cri-o:/{{ crio_version }}/CentOS_9_Stream/devel:kubic:libcontainers:stable:cri-o:{{ crio_version }}.repo"
+            dest: /etc/yum.repos.d/devel:kubic:libcontainers:stable:cri-o:{{ crio_version }}.repo
+            mode: '0644'
+
+    - name: "Install CRI-O"
+      dnf:
+        name: cri-o
+        state: present
+
+    - name: "Enable and start CRI-O service"
+      systemd:
+        name: crio
+        enabled: true
+        state: started
+
+
+    # -------------------------
+    # Install Kubernetes components
+    # -------------------------
+    - name: "Add Kubernetes yum repo"
+      copy:
+        dest: /etc/yum.repos.d/kubernetes.repo
+        content: |
+          [kubernetes]
+          name=Kubernetes
+          baseurl=https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/
+          enabled=1
+          gpgcheck=1
+          repo_gpgcheck=1
+          gpgkey=https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/rpm/repodata/repomd.xml.key
+        mode: '0644'
+
+    - name: "Clean DNF cache"
+      command: dnf clean all
+
+    - name: "Refresh DNF metadata"
+      ansible.builtin.dnf:
+        update_cache: yes
+
+    - name: "Install kubeadm, kubectl and kubelet"
+      dnf:
+        name:
+          - kubeadm
+          - kubelet
+          - kubectl
+        state: present
+        disable_gpg_check: true
+
+    - name: "Enable and start kubelet"
+      systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+
+    - name: Check if worker already joined
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Create kubeadm token on control plane if not exists
+      command: kubeadm token create
+      register: kubeadm_token_cmd
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+      when: not kubelet_conf.stat.exists
+
+    - name: Get kubeadm token
+      set_fact:
+        kubeadm_token: "{{ kubeadm_token_cmd.stdout }}"
+      when: not kubelet_conf.stat.exists
+
+    - name: Get CA cert hash from control plane
+      shell: |
+        openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt \
+        | openssl rsa -pubin -outform der 2>/dev/null \
+        | openssl dgst -sha256 -hex \
+        | sed 's/^.* //'
+      register: ca_cert_hash_cmd
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: true
+      when: not kubelet_conf.stat.exists
+
+    - name: Set CA cert hash fact
+      set_fact:
+        ca_cert_hash: "{{ ca_cert_hash_cmd.stdout }}"
+      when: not kubelet_conf.stat.exists
+
+    - name: Reset kubeadm if previous join failed
+      command: kubeadm reset -f
+      when: not kubelet_conf.stat.exists
+      ignore_errors: true
+
+    - name: Join worker node to cluster
+      command: >
+        kubeadm join {{ hostvars[groups['kube_control_plane'][0]].ansible_host }}:6443
+        --token {{ kubeadm_token }}
+        --discovery-token-ca-cert-hash sha256:{{ ca_cert_hash }}
+        --cri-socket {{ cri_socket }}
+      when: not kubelet_conf.stat.exists
+
+    - name: Wait for node to become Ready
+      delegate_to: "{{ groups['kube_control_plane'][0] }}"
+      run_once: false
+      retries: 30
+      delay: 10
+      until: node_status.resources
+              | selectattr('metadata.name', 'equalto', inventory_hostname)
+              | map(attribute='status.conditions')
+              | map('selectattr', 'type', 'equalto', 'Ready')
+              | map('first')
+              | map(attribute='status')
+              | first == 'True'
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: node_status
+      when: not kubelet_conf.stat.exists
+

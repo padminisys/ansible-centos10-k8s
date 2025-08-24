@@ -1,0 +1,18 @@
+#SPDX-License-Identifier: MIT-0
+---
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: restart crio
+  ansible.builtin.systemd:
+    name: crio
+    state: restarted
+    enabled: yes
+
+- name: restart kubelet
+  ansible.builtin.systemd:
+    name: kubelet
+    state: restarted
+    enabled: yes
+# handlers file for roles/kubernetes_setup

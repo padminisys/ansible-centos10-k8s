@@ -1,0 +1,11 @@
+---
+- name: Example - Worker Setup
+  hosts: localhost
+  gather_facts: false
+  collections: [padminisys.kubernetes]
+  roles:
+    - role: worker_setup
+      vars:
+        k8s_cluster_name: "dev-cluster"
+        worker_cpu_limit: "4"
+        worker_memory_limit: "8Gi"

@@ -1,0 +1,21 @@
+namespace: padminisys
+name: kubernetes
+version: 1.0.0
+readme: README.md
+authors: [Padminisys Team]
+description: "Complete Kubernetes cluster setup and management collection with Cilium CNI."
+license: MIT
+tags: [kubernetes, k8s, cilium, cni, cluster, setup]
+repository: "https://github.com/padminisys/kubernetes"
+issues: "https://github.com/padminisys/kubernetes/issues"
+build_ignore:
+  - .git
+  - .github
+  - .venv
+  - __pycache__
+  - "*.tar.gz"
+  - "*.zip"
+  - ".vscode"
+  - docs/
+  - molecule/
+  - tests/

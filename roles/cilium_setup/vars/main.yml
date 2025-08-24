@@ -1,0 +1,9 @@
+#SPDX-License-Identifier: MIT-0
+---
+    # Helm chart version (NOT app version). Check: helm search repo cilium --versions
+cilium_chart_version: "1.18.1"
+cilium_namespace: "kube-system"
+kubeconfig_path: "/etc/kubernetes/admin.conf"
+cilium_values_file: "./cilium-values.yml"
+
+# vars file for roles/cilium_setup

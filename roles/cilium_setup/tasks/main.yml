@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: MIT-0
+---
+#- name: Install Cilium CNI using Helm
+#hosts: localhost
+#become: true
+
+#tasks:
+
+    - name: Copy Cilium values file to target host
+      ansible.builtin.copy:
+        src: cilium-values.yml
+        dest: "{{ cilium_values_file }}"
+        mode: '0644'
+
+    - name: Verify file existence
+      stat:
+        path: "{{ cilium_values_file }}"
+      register: stat_result
+
+    - name: Debug file existence
+      debug:
+        msg: "File exists: {{ stat_result.stat.exists }}"
+
+    - name: Ensure dependencies are present
+      ansible.builtin.package:
+        name:
+          - curl
+          - git
+        state: present
+
+    - name: Install Helm if not present
+      ansible.builtin.shell: |
+        curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        creates: /usr/bin/helm
+      register: helm_install_status
+      failed_when: >
+        helm_install_status.rc != 0 and "is already latest" not in helm_install_status.stdout
+
+    - name: Ensure Cilium Helm repo is added
+      kubernetes.core.helm_repository:
+        name: cilium
+        repo_url: https://helm.cilium.io
+
+    - name: Update Helm repositories
+      kubernetes.core.helm_repository:
+        name: stable
+        repo_url: https://charts.helm.sh/stable
+        state: present
+
+    - name: Install or upgrade Cilium using Helm
+      kubernetes.core.helm:
+        name: cilium
+        chart_ref: cilium/cilium
+        chart_version: "{{ cilium_chart_version }}"
+        release_namespace: "{{ cilium_namespace }}"
+        create_namespace: true
+        values_files:
+          - "{{ cilium_values_file }}"
+        kubeconfig: "{{ kubeconfig_path }}"
+        wait: true
+
+
+    - name: Wait for Cilium pods to be Ready
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ cilium_namespace }}"
+        label_selectors:
+          - k8s-app=cilium
+        kubeconfig: "{{ kubeconfig_path }}"
+      register: cilium_pods
+      retries: 30
+      delay: 10
+      until:
+        - cilium_pods.resources is defined
+        - cilium_pods.resources | length > 0
+        - (cilium_pods.resources | map(attribute='status') | map(attribute='phase') | list) | select('equalto','Running') | length == (cilium_pods.resources | length)

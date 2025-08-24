@@ -1,0 +1,6 @@
+- hosts: kube_workers
+  become: true
+  vars:
+    #ansible_python_interpreter: /root/kubernetes/.venv/bin/python
+  roles:
+    - role: worker_setup 

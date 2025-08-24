@@ -1,0 +1,27 @@
+---
+- name: Setup complete Kubernetes cluster
+  hosts: k8s_masters
+  gather_facts: true
+  collections: [padminisys.kubernetes]
+  roles:
+    - role: kubernetes_setup
+      vars:
+        k8s_cluster_name: "production-cluster"
+        k8s_version: "1.28"
+        k8s_pod_network_cidr: "10.244.0.0/16"
+    - role: cilium_setup
+      vars:
+        cilium_version: "1.14"
+        cilium_cluster_pool_cidr: "10.0.0.0/8"
+        cilium_features: ["hubble", "encryption", "l7-proxy"]
+
+- name: Setup worker nodes
+  hosts: k8s_workers
+  gather_facts: true
+  collections: [padminisys.kubernetes]
+  roles:
+    - role: worker_setup
+      vars:
+        k8s_cluster_name: "production-cluster"
+        worker_cpu_limit: "8"
+        worker_memory_limit: "16Gi"

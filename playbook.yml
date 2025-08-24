@@ -1,6 +1,16 @@
+- hosts: kube_control_plane
+  become: true
+  roles:
+    - role: kubernetes_setup 
+
+
+- hosts: kube_control_plane
+  become: true
+  roles:
+    - role: cilium_setup 
+
+
 - hosts: kube_workers
   become: true
-  vars:
-    #ansible_python_interpreter: /root/kubernetes/.venv/bin/python
   roles:
     - role: worker_setup 

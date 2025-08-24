@@ -1,0 +1,86 @@
+---
+- name: Gather all facts including swap information
+  ansible.builtin.setup:
+    gather_subset: all
+
+- name: Disable SWAP
+  ansible.builtin.command: swapoff -a
+  when: ansible_swaptotal_mb is defined and ansible_swaptotal_mb > 0
+
+- name: Ensure swap entry in /etc/fstab is commented
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*\s+swap\s+)'
+    replace: '#\1'
+
+- name: Ensure firewall is enabled
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: yes
+
+- name: Open required firewall ports
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    immediate: true
+  loop:
+    - 80/tcp
+    - 443/tcp
+    - 6443/tcp
+    - 2379-2380/tcp
+    - 10250/tcp
+    - 10257/tcp
+    - 10259/tcp
+    - 30000-32767/tcp
+
+- name: Reload firewalld
+  ansible.builtin.service:
+    name: firewalld
+    state: reloaded
+
+- name: Load kernel modules for Kubernetes
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+    owner: root
+    group: root
+    mode: 0644
+
+- name: Ensure required kernel modules are loaded
+  ansible.builtin.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Configure kernel parameters for Kubernetes
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-kubernetes-cri.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.ipv4.ip_forward                 = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+    owner: root
+    group: root
+    mode: 0644
+
+- name: Apply sysctl params
+  ansible.builtin.command: sysctl --system
+  register: sysctl_apply
+  changed_when: "'net.bridge.bridge-nf-call-iptables' in sysctl_apply.stdout"
+
+- name: Set SELinux to permissive mode (runtime)
+  ansible.builtin.command: setenforce 0
+  when: ansible_selinux.status == "enabled" and ansible_selinux.mode != "permissive"
+  ignore_errors: true # for idempotency
+
+- name: Set SELinux to permissive in config file
+  ansible.builtin.replace:
+    path: /etc/selinux/config
+    regexp: '^SELINUX=enforcing'
+    replace: 'SELINUX=permissive'

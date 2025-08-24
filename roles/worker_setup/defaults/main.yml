@@ -1,0 +1,4 @@
+#SPDX-License-Identifier: MIT-0
+---
+kubeconfig_path: /etc/kubernetes/admin.conf
+# defaults file for roles/worker_setup

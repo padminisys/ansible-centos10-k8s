@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT-0
+#---
+- name: Preflight
+  import_tasks: preflight.yml
+
+- name: Install runtimes and k8s
+  import_tasks: install.yml
+
+- name: Initialize Kubernetes cluster
+  import_tasks: init_cluster.yml
+
+
+#- name: Setup Kubernetes cluster
+# ansible.builtin.debug:
+#    msg: "Setting up Kubernetes cluster for {{ k8s_cluster_name | default('default-cluster') }}"
+
+#- name: Install Kubernetes packages
+#  ansible.builtin.debug:
+#    msg: "Installing Kubernetes version {{ k8s_version | default('1.28') }}"
+
+#- name: Configure Kubernetes master node
+#  ansible.builtin.debug:
+#    msg: "Configuring master node with {{ k8s_pod_network_cidr | default('10.244.0.0/16') }}"

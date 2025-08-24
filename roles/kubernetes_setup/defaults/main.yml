@@ -1,0 +1,8 @@
+#SPDX-License-Identifier: MIT-0
+---
+k8s_version: "1.33"
+crio_version: "1.33"
+cilium_cli_version: "v0.18.5"
+cilium_version: "1.17.5"
+cilium_cli_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
+# defaults file for roles/kubernetes_setup

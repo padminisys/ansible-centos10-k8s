@@ -1,0 +1,11 @@
+---
+- name: Example - Cilium Setup
+  hosts: localhost
+  gather_facts: false
+  collections: [padminisys.kubernetes]
+  roles:
+    - role: cilium_setup
+      vars:
+        cilium_version: "1.14"
+        cilium_cluster_pool_cidr: "10.0.0.0/8"
+        cilium_features: ["hubble", "encryption"]

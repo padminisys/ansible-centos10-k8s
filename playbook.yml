@@ -2,11 +2,6 @@
   become: true
   roles:
     - role: kubernetes_setup 
-
-
-- hosts: kube_control_plane
-  become: true
-  roles:
     - role: cilium_setup 
 
 
